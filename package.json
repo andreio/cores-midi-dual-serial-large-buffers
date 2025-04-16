@@ -1,6 +1,6 @@
 {
   "name": "cores-midi-dual-serial-large-buffers",
-  "version": "0.60.1",
+  "version": "1.59.0",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"

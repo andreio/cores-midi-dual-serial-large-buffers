@@ -23,8 +23,7 @@
  * SOFTWARE.
  */
 
-#include <cstdlib>
-#include <new>
+#include <stdlib.h>
 
 void * operator new(size_t size)
 {
@@ -56,32 +55,3 @@ void operator delete[](void * ptr, size_t size __attribute__((unused)))
 	free(ptr);
 }
 
-void * operator new(size_t size, std::align_val_t align)
-{
-	return aligned_alloc((size_t)align, size);
-}
-
-void * operator new[](size_t size, std::align_val_t align)
-{
-	return aligned_alloc((size_t)align, size);
-}
-
-void operator delete(void * ptr, std::align_val_t align __attribute__((unused)))
-{
-	free(ptr);
-}
-
-void operator delete[](void * ptr, std::align_val_t align __attribute__((unused)))
-{
-	free(ptr);
-}
-
-void operator delete(void * ptr, size_t size __attribute__((unused)), std::align_val_t align __attribute__((unused)))
-{
-	free(ptr);
-}
-
-void operator delete[](void * ptr, size_t size __attribute__((unused)), std::align_val_t align __attribute__((unused)))
-{
-	free(ptr);
-}

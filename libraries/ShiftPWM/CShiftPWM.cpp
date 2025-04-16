@@ -37,7 +37,7 @@ CShiftPWM::CShiftPWM(int timerInUse, bool noSPI, int latchPin, int dataPin, int 
 }
 
 CShiftPWM::~CShiftPWM() {
-	if(m_PWMValues){
+	if(m_PWMValues>0){
 		free( m_PWMValues );
 	}
 }

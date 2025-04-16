@@ -20,7 +20,7 @@ const  QuadEncoder::ENC_Hardware_t QuadEncoder::hardware[] = {
 	{0, 0, &CORE_XIO_PIN0, 1, 17, 1},	{1, 1, &CORE_XIO_PIN1, 1, 16, 0},
 	{2, 2, &CORE_XIO_PIN2, 3, 6, 0},	{3, 3, &CORE_XIO_PIN3, 3, 7, 0},
 	{4, 4, &CORE_XIO_PIN4,3, 8, 0},		{5, 5, &CORE_XIO_PIN5, 3, 17, 0},
-	{6, 7, &CORE_XIO_PIN7, 1, 15, 1},	{7, 8, &CORE_XIO_PIN8, 1, 14, 1},
+	{6, 7, &CORE_XIO_PIN7, 1, 15, 1},	{8, 8, &CORE_XIO_PIN8, 1, 14, 1},
 	{8, 30, &CORE_XIO_PIN30, 1, 23, 0},	{9, 31, &CORE_XIO_PIN31, 1, 22, 0},
 	{10, 33, &CORE_XIO_PIN33, 3, 9, 0}
 };
@@ -82,7 +82,7 @@ QuadEncoder::QuadEncoder(uint8_t encoder_ch, uint8_t PhaseA_pin, uint8_t PhaseB_
 #endif
 	  if(PhaseA_pin != 255 )
 		enc_xbara_mapping(PhaseA_pin, PHASEA, pin_pus);
-	  if(PhaseB_pin != 255 )
+	  if(PhaseA_pin != 255 )
 		enc_xbara_mapping(PhaseB_pin, PHASEB, pin_pus);
 	  if(home_pin != 255 )
 		 enc_xbara_mapping(home_pin, HOME, pin_pus);

@@ -179,17 +179,12 @@ SoftwareSerial::SoftwareSerial(uint8_t rxPin, uint8_t txPin, bool inverse_logic 
 	}
 #endif
 	port = NULL;
+	pinMode(txPin, OUTPUT);
+	pinMode(rxPin, INPUT_PULLUP);
 	txpin = txPin;
 	rxpin = rxPin;
-#if defined(__IMXRT1052__) || defined(__IMXRT1062__)
-	tx_clear_reg = portClearRegister(digitalPinToPort(txPin));
-	tx_set_reg = portSetRegister(digitalPinToPort(txPin));
-	tx_bitmask = digitalPinToBitMask(digitalPinToPort(txPin));
-	rxreg = portInputRegister(digitalPinToPort(rxPin));
-#else
 	txreg = portOutputRegister(digitalPinToPort(txPin));
 	rxreg = portInputRegister(digitalPinToPort(rxPin));
-#endif
 	cycles_per_bit = 0;
 }
 
@@ -198,22 +193,9 @@ void SoftwareSerial::begin(unsigned long speed)
 	if (port) {
 		port->begin(speed);
 	} else {
-		rx_head = 0;
-		rx_tail = 0;
 		cycles_per_bit = (uint32_t)(F_CPU + speed / 2) / speed;
-		microseconds_per_bit = (float)cycles_per_bit / (float)(F_CPU / 1000000);
-		// TODO: latency estimate could be better tuned to each board
-		const float latency = 900.0f / (float)(F_CPU / 1000000);
-		microseconds_start = microseconds_per_bit * 1.5f - latency;
 		ARM_DEMCR |= ARM_DEMCR_TRCENA;
 		ARM_DWT_CTRL |= ARM_DWT_CTRL_CYCCNTENA;
-		pinMode(txpin, OUTPUT);
-		digitalWrite(txpin, HIGH);
-		pinMode(rxpin, INPUT_PULLUP);
-		delayMicroseconds(5); // allow time for pullup -> logic high
-		attachInterrupt(digitalPinToInterrupt(rxpin), start_bit_falling_edge, FALLING);
-		active_object = this;
-		//Serial.printf("begin bitbang, rxpin=%u, txpin=%u\n", rxpin, txpin);
 	}
 }
 
@@ -223,9 +205,6 @@ void SoftwareSerial::end()
 		port->end();
 		port = NULL;
 	} else {
-		active_object = NULL;
-		detachInterrupt(rxpin);
-		data_bit_timer.end();
 		pinMode(txpin, INPUT);
 		pinMode(rxpin, INPUT);
 	}
@@ -269,20 +248,16 @@ size_t SoftwareSerial::write(uint8_t b)
 	target = cycles_per_bit;
 	noInterrupts();
 	begin_cycle = ARM_DWT_CYCCNT;
-	tx0();
+	*txreg = 0;
 	wait_for_target(begin_cycle, target);
 	// 8 data bits
 	for (mask = 1; mask; mask <<= 1) {
-		if (b & mask) {
-			tx1();
-		} else {
-			tx0();
-		}
+		*txreg = (b & mask) ? 1 : 0;
 		target += cycles_per_bit;
 		wait_for_target(begin_cycle, target);
 	}
 	// stop bit
-	tx1();
+	*txreg = 1;
 	interrupts();
 	target += cycles_per_bit;
 	while (ARM_DWT_CYCCNT - begin_cycle < target) ; // wait
@@ -294,91 +269,27 @@ void SoftwareSerial::flush()
 	if (port) port->flush();
 }
 
-
-
-SoftwareSerial * SoftwareSerial::active_object = NULL;
-
-void SoftwareSerial::start_bit_falling_edge()
-{
-	if (active_object) active_object->start_bit_begin();
-}
-
-void SoftwareSerial::data_bit_sampling_timer()
-{
-	if (active_object) active_object->data_bit_sample();
-}
-
-
-void SoftwareSerial::start_bit_begin()
-{
-	//digitalWriteFast(12, HIGH);
-	if (data_bit_timer.begin(data_bit_sampling_timer, microseconds_start)) {
-		data_bit_timer.update(microseconds_per_bit);
-		detachInterrupt(rxpin);
-		rxcount = 0;
-		rxbyte = 0;
-	} else {
-		// TODO: should we somehow report error allocating IntervalTimer?
-	}
-	//digitalWriteFast(12, LOW);
-}
-
-void SoftwareSerial::data_bit_sample()
-{
-	//digitalWriteFast(12, HIGH);
-	if (digitalRead(rxpin) == HIGH) rxbyte |= (1 << rxcount);
-	rxcount = rxcount + 1;
-	if (rxcount == 8) { // last data bit
-		uint16_t head = rx_head + 1;
-		if (head >= _SS_MAX_RX_BUFF) head = 0;
-		if (head != rx_tail) {
-			rx_buffer[head] = rxbyte;
-			rx_head = head;
-		}
-	}
-	if (rxcount >= 9) { // stop bit
-		data_bit_timer.end();
-		attachInterrupt(digitalPinToInterrupt(rxpin), start_bit_falling_edge, FALLING);
-	}
-	//digitalWriteFast(12, LOW);
-}
-
-
+// TODO implement reception using pin change DMA capturing
+// ARM_DWT_CYCCNT and the bitband mapped GPIO_PDIR register
+// to a circular buffer (8 bytes per event... memory intensive)
 
 int SoftwareSerial::available()
 {
 	if (port) return port->available();
-	uint16_t head, tail;
-	head = rx_head;
-	tail = rx_tail;
-	if (head >= tail) return head - tail;
-	return _SS_MAX_RX_BUFF + head - tail;
+	return 0;
 }
 
 int SoftwareSerial::peek()
 {
 	if (port) return port->peek();
-	uint16_t head, tail;
-	head = rx_head;
-	tail = rx_tail;
-	if (head == tail) return -1;
-	if (++tail >= _SS_MAX_RX_BUFF) tail = 0;
-	return rx_buffer[tail];
+	return -1;
 }
 
 int SoftwareSerial::read()
 {
 	if (port) return port->read();
-	uint16_t head, tail;
-	head = rx_head;
-	tail = rx_tail;
-	if (head == tail) return -1;
-	if (++tail >= _SS_MAX_RX_BUFF) tail = 0;
-	uint8_t n = rx_buffer[tail];
-	rx_tail = tail;
-	return n;
+	return -1;
 }
-
 
 #else
 

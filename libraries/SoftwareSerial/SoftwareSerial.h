@@ -67,35 +67,16 @@ public:
 private:
 	HardwareSerial *port;
 	uint32_t cycles_per_bit;
-	float microseconds_per_bit;
-	float microseconds_start;
 	#if defined(__IMXRT1052__) || defined(__IMXRT1062__)
-	volatile uint32_t *tx_clear_reg;
-	volatile uint32_t *tx_set_reg;
-	uint32_t tx_bitmask;
+	volatile uint32_t *txreg;
 	volatile uint32_t *rxreg;
-	inline void tx0() { *tx_clear_reg = tx_bitmask; }
-	inline void tx1() { *tx_set_reg = tx_bitmask; }
 	#else
 	volatile uint8_t *txreg;
 	volatile uint8_t *rxreg;
-	inline void tx0() { *txreg = 0; } // assumes Cortex-M4 bitband address
-	inline void tx1() { *txreg = 1; }
 	#endif
 	bool buffer_overflow;
 	uint8_t txpin;
 	uint8_t rxpin;
-	uint8_t rxbyte;
-	uint8_t rxcount;
-	static void start_bit_falling_edge();
-	static void data_bit_sampling_timer();
-	static SoftwareSerial *active_object;
-	void start_bit_begin();
-	void data_bit_sample();
-	IntervalTimer data_bit_timer;
-	uint16_t rx_head;
-	uint16_t rx_tail;
-	uint8_t rx_buffer[_SS_MAX_RX_BUFF];
 };
 
 #else

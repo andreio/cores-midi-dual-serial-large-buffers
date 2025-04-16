@@ -187,8 +187,9 @@ typedef uint8_t RAFB;
 #define ILI9488_GREENYELLOW 0xAFE5      /* 173, 255,  47 */
 #define ILI9488_PINK        0xF81F
 
+#ifndef CL
 #define CL(_r,_g,_b) ((((_r)&0xF8)<<8)|(((_g)&0xFC)<<3)|((_b)>>3))
-
+#endif
 #define sint16_t int16_t
 
 // Map fonts that were modified back to the ILI9341 font
@@ -322,20 +323,9 @@ class ILI9488_t3 : public Print
 	// Added functions to read pixel data...
 	uint16_t readPixel(int16_t x, int16_t y);
 	void readRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t *pcolors);
-
-  // This method writes a rectangle of pixel data either to the screen or to frame buffer
-  // this is like the fillRect, except instead of contant color, the array contains the
-  // the color for each pixel.
 	void writeRect(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t *pcolors);
 
-
-  // The write sub-rect is like the writeRect, except we only want to output a portion of it, so it needs to
-  // skip through portions of the pcolor array to keep things aligned.
-  void writeSubImageRect(int16_t x, int16_t y, int16_t w, int16_t h, 
-                        int16_t image_offset_x, int16_t image_offset_y, int16_t image_width, int16_t image_height, 
-                        const uint16_t *pcolors);
-  
-  // writeRect8BPP - 	write 8 bit per pixel paletted bitmap
+	// writeRect8BPP - 	write 8 bit per pixel paletted bitmap
 	//					bitmap data in array at pixels, one byte per pixel
 	//					color palette data in array at palette
 	void writeRect8BPP(int16_t x, int16_t y, int16_t w, int16_t h, const uint8_t *pixels, const uint16_t * palette );
@@ -378,7 +368,9 @@ class ILI9488_t3 : public Print
 	void drawChar(int16_t x, int16_t y, unsigned char c, uint16_t color, uint16_t bg, uint8_t size_x, uint8_t size_y);
 	void inline drawChar(int16_t x, int16_t y, unsigned char c, uint16_t color, uint16_t bg, uint8_t size) 
 	    { drawChar(x, y, c, color, bg, size);}
+	#ifndef CENTER
 	static const int16_t CENTER = 9998;
+	#endif
 	void setCursor(int16_t x, int16_t y, bool autoCenter=false);
     void getCursor(int16_t *x, int16_t *y);
 	void setTextColor(uint16_t c);
@@ -537,6 +529,12 @@ class ILI9488_t3 : public Print
 	boolean	asyncUpdateActive(void)  {return false;}
 	#endif
 
+  void updateChangedAreasOnly(bool updateChangedOnly) {
+		#ifdef ENABLE_ILI9488_FRAMEBUFFER
+    _updateChangedAreasOnly = updateChangedOnly;
+		#endif
+  }
+
 
  protected:
  	uint32_t				_clock;
@@ -571,11 +569,10 @@ class ILI9488_t3 : public Print
 		_displayclipy2 = max(0,min(_clipy2+_originy,height()));
 		_invisible = (_displayclipx1 == _displayclipx2 || _displayclipy1 == _displayclipy2);
 		_standard =  (_displayclipx1 == 0) && (_displayclipx2 == _width) && (_displayclipy1 == 0) && (_displayclipy2 == _height);
-		if (Serial) {
-			//Serial.printf("UDC (%d %d)-(%d %d) %d %d\n", _displayclipx1, _displayclipy1, _displayclipx2, 
-			//	_displayclipy2, _invisible, _standard);
-
-		}
+		//if (Serial) {
+		//	Serial.printf("UDC (%d %d)-(%d %d) %d %d\n", _displayclipx1, _displayclipy1, _displayclipx2, 
+		//		_displayclipy2, _invisible, _standard);
+		//}
 	}
 	
 	uint16_t textcolor, textbgcolor, scrollbgcolor;
@@ -644,6 +641,8 @@ class ILI9488_t3 : public Print
     RAFB		*_pfbtft;						// Optional Frame buffer 
     uint8_t		_use_fbtft;						// Are we in frame buffer mode?
     uint8_t		*_we_allocated_buffer;			// We allocated the buffer; 
+  	int16_t _changed_min_x, _changed_max_x, _changed_min_y, _changed_max_y;
+  	bool _updateChangedAreasOnly = false; // current default off,
 
 #ifdef ILI9488_USES_PALLET
     uint16_t	*_pallet;						// Support for user to set Pallet. 
@@ -766,8 +765,9 @@ class ILI9488_t3 : public Print
 	//    digitalWriteFast(2, LOW);
 	}
 
-
-	#define TCR_MASK  (LPSPI_TCR_PCS(3) | LPSPI_TCR_FRAMESZ(31) | LPSPI_TCR_CONT | LPSPI_TCR_RXMSK )
+#ifndef TCR_MASK
+#define TCR_MASK  (LPSPI_TCR_PCS(3) | LPSPI_TCR_FRAMESZ(31) | LPSPI_TCR_CONT | LPSPI_TCR_RXMSK )
+#endif
 	void maybeUpdateTCR(uint32_t requested_tcr_state) /*__attribute__((always_inline)) */ {
 		if ((_spi_tcr_current & TCR_MASK) != requested_tcr_state) {
 			bool dc_state_change = (_spi_tcr_current & LPSPI_TCR_PCS(3)) != (requested_tcr_state & LPSPI_TCR_PCS(3));
@@ -1046,6 +1046,42 @@ class ILI9488_t3 : public Print
 		waitTransmitComplete();
 	}
 
+#endif
+
+#ifdef ENABLE_ILI9488_FRAMEBUFFER
+  void clearChangedRange() {
+    _changed_min_x = 0x7fff;
+    _changed_max_x = -1;
+    _changed_min_y = 0x7fff;
+    _changed_max_y = -1;
+  }
+
+  void updateChangedRange(int16_t x, int16_t y, int16_t w, int16_t h)
+      __attribute__((always_inline)) {
+    if (x < _changed_min_x)
+      _changed_min_x = x;
+    if (y < _changed_min_y)
+      _changed_min_y = y;
+    x += w - 1;
+    y += h - 1;
+    if (x > _changed_max_x)
+      _changed_max_x = x;
+    if (y > _changed_max_y)
+      _changed_max_y = y;
+    //if (Serial)Serial.printf("UCR(%d %d %d %d) min:%d %d max:%d %d\n", w, y, w, h, _changed_min_x, _changed_min_y, _changed_max_x, _changed_max_y);
+  }
+
+  // could combine with above, but avoids the +-...
+  void updateChangedRange(int16_t x, int16_t y) __attribute__((always_inline)) {
+    if (x < _changed_min_x)
+      _changed_min_x = x;
+    if (y < _changed_min_y)
+      _changed_min_y = y;
+    if (x > _changed_max_x)
+      _changed_max_x = x;
+    if (y > _changed_max_y)
+      _changed_max_y = y;
+  }
 #endif
 
 	// Other helper functions.

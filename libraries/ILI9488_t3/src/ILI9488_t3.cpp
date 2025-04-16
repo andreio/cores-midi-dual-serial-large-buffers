@@ -219,10 +219,10 @@ void ILI9488_t3::setFrameBuffer(RAFB *frame_buffer)
 {
 	#ifdef ENABLE_ILI9488_FRAMEBUFFER
 	_pfbtft = frame_buffer;
-//	if (_pfbtft != NULL) {
-//		// Frame buffer is color index only here...
-//		memset(_pfbtft, 0, ILI9488_TFTHEIGHT*ILI9488_TFTWIDTH);
-//	}
+	if (_pfbtft != NULL) {
+		// Frame buffer is color index only here...
+		memset(_pfbtft, 0, ILI9488_TFTHEIGHT*ILI9488_TFTWIDTH);
+	}
 
 	#endif	
 }
@@ -279,9 +279,15 @@ void ILI9488_t3::updateScreen(void)					// call to say update the screen now.
 	// Not sure if better here to check flag or check existence of buffer.
 	// Will go by buffer as maybe can do interesting things?
 	#ifdef ENABLE_ILI9488_FRAMEBUFFER
+	/*
+	if (Serial) {
+		Serial.printf("UpdateScreen: u:%u s:%u (%u %) (%u %u)\n", _use_fbtft, _standard,
+			_displayclipx1, _displayclipy1, _displayclipx2-1, _displayclipy2-1);
+	}
+	*/
 	if (_use_fbtft) {
 		beginSPITransaction();
-		if (_standard) {
+    if (_standard && !_updateChangedAreasOnly) {
 			//Serial.printf("Update Screen Standard %x(%x)\n", *_pfbtft, _pallet[*_pfbtft]);
 			// Doing full window. 
 			setAddr(0, 0, _width-1, _height-1);
@@ -317,65 +323,95 @@ void ILI9488_t3::updateScreen(void)					// call to say update the screen now.
 			write16BitColor(*pftbft, true);
 			#endif
 		} else {
-			// setup just to output the clip rectangle area. 
-			setAddr(_displayclipx1, _displayclipy1, _displayclipx2-1, _displayclipy2-1);
-			writecommand_cont(ILI9488_RAMWR);
+      // setup just to output the clip rectangle area anded with updated area if
+      // enabled
+      int16_t start_x = _displayclipx1;
+      int16_t start_y = _displayclipy1;
+      int16_t end_x = _displayclipx2 - 1;
+      int16_t end_y = _displayclipy2 - 1;
 
-			// BUGBUG doing as one shot.  Not sure if should or not or do like
-			// main code and break up into transactions...
-			RAFB * pfbPixel_row = &_pfbtft[ _displayclipy1*_width + _displayclipx1];
-			#ifdef ILI9488_USES_PALLET
-			for (uint16_t y = _displayclipy1; y < _displayclipy2; y++) {
-				RAFB * pfbPixel = pfbPixel_row;
-				for (uint16_t x = _displayclipx1; x < (_displayclipx2-1); x++) {
-					write16BitColor(_pallet[*pfbPixel++]);
+      if (_updateChangedAreasOnly) {
+        // maybe update range of values to update...
+        if (_changed_min_x > start_x)
+          start_x = _changed_min_x;
+        if (_changed_min_y > start_y)
+          start_y = _changed_min_y;
+        if (_changed_max_x < end_x)
+          end_x = _changed_max_x;
+        if (_changed_max_y < end_y)
+          end_y = _changed_max_y;
+      }
+
+      // Only do if actual area to update
+      if ((start_x <= end_x) && (start_y <= end_y)) {
+        setAddr(start_x, start_y, end_x, end_y);
+        /*
+        static uint8_t debug_count = 255;
+        if(Serial && debug_count) {
+        	debug_count--;
+        	Serial.printf("updateScreen (%d %d) (%d %d) (%d %d %d %d)\n", start_x, start_y, end_x, end_y,
+      	    _changed_min_x, _changed_min_y, _changed_max_x, _changed_max_y);
+        }
+        */
+				writecommand_cont(ILI9488_RAMWR);
+
+				// BUGBUG doing as one shot.  Not sure if should or not or do like
+				// main code and break up into transactions...
+				RAFB * pfbPixel_row = &_pfbtft[ start_y*_width + start_x];
+				#ifdef ILI9488_USES_PALLET
+				for (uint16_t y = start_y; y <= end_y; y++) {
+					RAFB * pfbPixel = pfbPixel_row;
+					for (uint16_t x = start_x; x < end_x; x++) {
+						write16BitColor(_pallet[*pfbPixel++]);
+					}
+					if (y < (end_y-1))
+						write16BitColor(_pallet[*pfbPixel]);
+					else	
+						write16BitColor(_pallet[*pfbPixel], true);
+					pfbPixel_row += _width;	// setup for the next row. 
 				}
-				if (y < (_displayclipy2-1))
-					write16BitColor(_pallet[*pfbPixel]);
-				else	
-					write16BitColor(_pallet[*pfbPixel], true);
-				pfbPixel_row += _width;	// setup for the next row. 
-			}
-			#elif defined(ENABLE_EXT_DMA_UPDATES)
+				#elif defined(ENABLE_EXT_DMA_UPDATES)
 
-			maybeUpdateTCR(_tcr_dc_not_assert | LPSPI_TCR_FRAMESZ(23) | LPSPI_TCR_CONT);
-			for (uint16_t y = _displayclipy1; y < _displayclipy2; y++) {
-				RAFB * pfbPixel = pfbPixel_row;
-				for (uint16_t x = _displayclipx1; x < (_displayclipx2-1); x++) {
-					_pimxrt_spi->TDR = *pfbPixel++;
-					_pending_rx_count++;	//
-					waitFifoNotFull();
+				maybeUpdateTCR(_tcr_dc_not_assert | LPSPI_TCR_FRAMESZ(23) | LPSPI_TCR_CONT);
+				for (uint16_t y = start_y; y <= end_y; y++) {
+					RAFB * pfbPixel = pfbPixel_row;
+					for (uint16_t x = start_x; x < end_x; x++) {
+						_pimxrt_spi->TDR = *pfbPixel++;
+						_pending_rx_count++;	//
+						waitFifoNotFull();
+					}
+					if (y < (end_y-1)) {
+						_pimxrt_spi->TDR = *pfbPixel;
+						_pending_rx_count++;	//
+						waitFifoNotFull();
+					} else {
+						maybeUpdateTCR(_tcr_dc_not_assert | LPSPI_TCR_FRAMESZ(23));
+						_pimxrt_spi->TDR = *pfbPixel;
+						_pending_rx_count++;	//
+						waitTransmitComplete();
+
+					}	
+					pfbPixel_row += _width;	// setup for the next row. 
 				}
-				if (y < (_displayclipy2-1)) {
-					_pimxrt_spi->TDR = *pfbPixel;
-					_pending_rx_count++;	//
-					waitFifoNotFull();
-				} else {
-					maybeUpdateTCR(_tcr_dc_not_assert | LPSPI_TCR_FRAMESZ(23));
-					_pimxrt_spi->TDR = *pfbPixel;
-					_pending_rx_count++;	//
-					waitTransmitComplete();
 
-				}	
-				pfbPixel_row += _width;	// setup for the next row. 
-			}
-
-			#else
-			for (uint16_t y = _displayclipy1; y < _displayclipy2; y++) {
-				RAFB * pfbPixel = pfbPixel_row;
-				for (uint16_t x = _displayclipx1; x < (_displayclipx2-1); x++) {
-					write16BitColor(*pfbPixel++);
+				#else
+				for (uint16_t y = start_y; y <= end_y; y++) {
+					RAFB * pfbPixel = pfbPixel_row;
+					for (uint16_t x = start_x; x < end_x; x++) {
+						write16BitColor(*pfbPixel++);
+					}
+					if (y < (end_y-1))
+						write16BitColor(*pfbPixel);
+					else	
+						write16BitColor(*pfbPixel, true);
+					pfbPixel_row += _width;	// setup for the next row. 
 				}
-				if (y < (_displayclipy2-1))
-					write16BitColor(*pfbPixel);
-				else	
-					write16BitColor(*pfbPixel, true);
-				pfbPixel_row += _width;	// setup for the next row. 
+				#endif
 			}
-			#endif
 		}
 		endSPITransaction();
 	}
+  clearChangedRange(); // make sure the dirty range is updated.
 	#endif
 }			 
 
@@ -557,6 +593,7 @@ void ILI9488_t3::drawPixel(int16_t x, int16_t y, uint16_t color) {
 
 	#ifdef ENABLE_ILI9488_FRAMEBUFFER
 	if (_use_fbtft) {
+    updateChangedRange(x, y); // update the range of the screen that has been changed;
 		_pfbtft[y*_width + x] = mapColorToPalletIndex(color);
 
 	} else 
@@ -582,6 +619,8 @@ void ILI9488_t3::drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t color)
 
 	#ifdef ENABLE_ILI9488_FRAMEBUFFER
 	if (_use_fbtft) {
+    updateChangedRange(
+        x, y, 1, h); // update the range of the screen that has been changed;
 		RAFB * pfbPixel = &_pfbtft[ y*_width + x];
 		RAFB color_index = mapColorToPalletIndex(color);
 		while (h--) {
@@ -612,6 +651,8 @@ void ILI9488_t3::drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color)
 
 	#ifdef ENABLE_ILI9488_FRAMEBUFFER
 	if (_use_fbtft) {
+    updateChangedRange(
+        x, y, w, 1); // update the range of the screen that has been changed;
 		RAFB color_index = mapColorToPalletIndex(color);
 		RAFB * pfbPixel = &_pfbtft[ y*_width + x];
 		while (w--) {
@@ -649,6 +690,8 @@ void ILI9488_t3::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t c
 
 	#ifdef ENABLE_ILI9488_FRAMEBUFFER
 	if (_use_fbtft) {
+    updateChangedRange(
+        x, y, w, h); // update the range of the screen that has been changed;
 		RAFB color_index = mapColorToPalletIndex(color);
 		//if (x==0 && y == 0) Serial.printf("fillrect %x %x %x\n", color, color_index, _pallet[color_index]);
 		//if (1 || (x&3) || (w&3)) {
@@ -717,6 +760,8 @@ void ILI9488_t3::fillRectVGradient(int16_t x, int16_t y, int16_t w, int16_t h, u
 
 	#ifdef ENABLE_ILI9488_FRAMEBUFFER
 	if (_use_fbtft) {
+    updateChangedRange(
+        x, y, w, h); // update the range of the screen that has been changed;
 		RAFB * pfbPixel_row = &_pfbtft[ y*_width + x];
 		for (;h>0; h--) {
 			uint16_t color = RGB14tocolor565(r,g,b);
@@ -771,6 +816,8 @@ void ILI9488_t3::fillRectHGradient(int16_t x, int16_t y, int16_t w, int16_t h, u
 	r=r1;g=g1;b=b1;	
 	#ifdef ENABLE_ILI9488_FRAMEBUFFER
 	if (_use_fbtft) {
+    updateChangedRange(
+        x, y, w, h); // update the range of the screen that has been changed;
 		RAFB * pfbPixel_row = &_pfbtft[ y*_width + x];
 		for (;h>0; h--) {
 			RAFB * pfbPixel = pfbPixel_row;
@@ -1375,17 +1422,40 @@ void ILI9488_t3::writeRect(int16_t x, int16_t y, int16_t w, int16_t h, const uin
 
 	#ifdef ENABLE_ILI9488_FRAMEBUFFER
 	if (_use_fbtft) {
+    int16_t y_changed_min = _height;
+    int16_t y_changed_max = -1;
+    int16_t i_changed_min = _width;
+    int16_t i_changed_max = -1;
+
 		RAFB * pfbPixel_row = &_pfbtft[ y*_width + x];
 		for (;h>0; h--) {
 			RAFB * pfbPixel = pfbPixel_row;
 			pcolors += x_clip_left;
 			for (int i = 0 ;i < w; i++) {
-				*pfbPixel++ = mapColorToPalletIndex(*pcolors++);
+				RAFB rafbPixelNew = mapColorToPalletIndex(*pcolors);
+				if (*pfbPixel != rafbPixelNew) {
+          // pixel changed
+          *pfbPixel = rafbPixelNew;
+          if (y < y_changed_min) y_changed_min = y;
+          if (y > y_changed_max) y_changed_max = y;
+          if (i < i_changed_min) i_changed_min = i;
+          if (i > i_changed_max) i_changed_max = i;
+        }
+        pfbPixel++;
+        pcolors++;
 			}
 			pfbPixel_row += _width;
 			pcolors += x_clip_right;
-
+    	y++;
 		}
+    // See if we found any change
+    // if any of the min/max values have default value we know that nothing changed.
+    if (y_changed_max != -1) {
+      updateChangedRange(x + i_changed_min , y_changed_min, 
+        (i_changed_max - i_changed_min) + 1, (y_changed_max - y_changed_min) + 1);
+
+      //if(Serial)Serial.printf("WRECT: %d - %d %d %d %d\n", x, i_changed_min, y_changed_min, i_changed_max, y_changed_max);
+    }
 		return;	
 	}
 	#endif
@@ -1402,79 +1472,6 @@ void ILI9488_t3::writeRect(int16_t x, int16_t y, int16_t w, int16_t h, const uin
 		pcolors += x_clip_right;
 	}
 	endSPITransaction();
-}
-
-// Now lets see if we can writemultiple pixels
-//                                    screen rect
-void ILI9488_t3::writeSubImageRect(int16_t x, int16_t y, int16_t w, int16_t h, 
-  int16_t image_offset_x, int16_t image_offset_y, int16_t image_width, int16_t image_height, const uint16_t *pcolors)
-{
-  if (x == CENTER) x = (_width - w) / 2;
-  if (y == CENTER) y = (_height - h) / 2;
-  x+=_originx;
-  y+=_originy;
-  // Rectangular clipping 
-
-  // See if the whole thing out of bounds...
-  if((x >= _displayclipx2) || (y >= _displayclipy2)) return;
-  if (((x+w) <= _displayclipx1) || ((y+h) <= _displayclipy1)) return;
-
-  // Now lets use or image offsets to get to the first pixels data
-  pcolors += image_offset_y * image_width + image_offset_x;
-
-  // In these cases you can not do simple clipping, as we need to synchronize the colors array with the
-  // We can clip the height as when we get to the last visible we don't have to go any farther. 
-  // also maybe starting y as we will advance the color array. 
-  if(y < _displayclipy1) {
-    int dy = (_displayclipy1 - y);
-    h -= dy; 
-    pcolors += (dy * image_width); // Advance color array by that number of rows in the image 
-    y = _displayclipy1;   
-  }
-
-  if((y + h - 1) >= _displayclipy2) h = _displayclipy2 - y;
-
-  // For X see how many items in color array to skip at start of row and likewise end of row 
-  if(x < _displayclipx1) {
-    uint16_t x_clip_left = _displayclipx1-x; 
-    w -= x_clip_left; 
-    x = _displayclipx1;   
-    pcolors += x_clip_left;  // pre index the colors array.
-  }
-  if((x + w - 1) >= _displayclipx2) {
-    uint16_t x_clip_right = w;
-    w = _displayclipx2  - x;
-    x_clip_right -= w; 
-  } 
-
-  #ifdef ENABLE_ILI9488_FRAMEBUFFER
-  if (_use_fbtft) {
-    RAFB * pfbPixel_row = &_pfbtft[ y*_width + x];
-    for (;h>0; h--) {
-      const uint16_t *pcolors_row = pcolors; 
-      RAFB * pfbPixel = pfbPixel_row;
-      for (int i = 0 ;i < w; i++) {
-				*pfbPixel++ = mapColorToPalletIndex(*pcolors++);
-      }
-      pfbPixel_row += _width;
-      pcolors = pcolors_row + image_width;
-    }
-    return; 
-  }
-  #endif
-
-  beginSPITransaction();
-  setAddr(x, y, x+w-1, y+h-1);
-  writecommand_cont(ILI9488_RAMWR);
-  for(y=h; y>0; y--) {
-    const uint16_t *pcolors_row = pcolors; 
-    for(x=w; x>1; x--) {
-      write16BitColor(*pcolors++);
-    }
-    write16BitColor(*pcolors++, true);
-    pcolors = pcolors_row + image_width;
-  }
-  endSPITransaction();
 }
 
 // writeRect8BPP - 	write 8 bit per pixel paletted bitmap
@@ -1520,6 +1517,8 @@ void ILI9488_t3::writeRect8BPP(int16_t x, int16_t y, int16_t w, int16_t h, const
 	//Serial.printf("WR8C: %d %d %d %d %x- %d %d\n", x, y, w, h, (uint32_t)pixels, x_clip_right, x_clip_left);
 	#ifdef ENABLE_ILI9488_FRAMEBUFFER
 	if (_use_fbtft) {
+    updateChangedRange(
+        x, y, w, h); // update the range of the screen that has been changed;
 		RAFB * pfbPixel_row = &_pfbtft[ y*_width + x];
 		for (;h>0; h--) {
 			pixels += x_clip_left;
@@ -1699,6 +1698,8 @@ void ILI9488_t3::writeRectNBPP(int16_t x, int16_t y, int16_t w, int16_t h,  uint
 
 	#ifdef ENABLE_ILI9488_FRAMEBUFFER
 	if (_use_fbtft) {
+    updateChangedRange(
+        x, y, w, h); // update the range of the screen that has been changed;
 		RAFB * pfbPixel_row = &_pfbtft[ y*_width + x];
 		for (;h>0; h--) {
 			RAFB * pfbPixel = pfbPixel_row;
@@ -1775,6 +1776,7 @@ void ILI9488_t3::begin(uint32_t clock)
 	_clock = clock;	// remember the passed in clock...
 
     // verify SPI pins are valid;
+    Serial.printf("::begin %x %d %d %d\n", (uint32_t)spi_port, _mosi, _miso, _sclk);  Serial.flush();
 	if ((_mosi != 255) || (_miso != 255) || (_sclk != 255)) {
 		if (!spi_port) {
 			//Serial.println("SPI Port not specified"); Serial.flush();
@@ -1814,7 +1816,7 @@ void ILI9488_t3::begin(uint32_t clock)
 			return; // not valid pins...
 		}
 		
-		//Serial.printf("MOSI:%d MISO:%d SCK:%d\n\r", _mosi, _miso, _sclk);			
+		Serial.printf("MOSI:%d MISO:%d SCK:%d\n\r", _mosi, _miso, _sclk);			
         spi_port->setMOSI(_mosi);
         if (_miso != 0xff) spi_port->setMISO(_miso);
         spi_port->setSCK(_sclk);
@@ -1938,6 +1940,7 @@ void ILI9488_t3::begin(uint32_t clock)
 	beginSPITransaction();
 	writecommand_last(ILI9488_DISPON);    // Display on
 	endSPITransaction();
+	Serial.println("ILI9488_t3::begin - End"); Serial.flush();
 }
 
 
@@ -2537,6 +2540,9 @@ void ILI9488_t3::drawChar(int16_t x, int16_t y, unsigned char c,
 
 		#ifdef ENABLE_ILI9488_FRAMEBUFFER
 		if (_use_fbtft) {
+      updateChangedRange(
+          x, y, 6 * size_x,
+          8 * size_y); // update the range of the screen that has been changed;
 			RAFB * pfbPixel_row = &_pfbtft[ y*_width + x];
 			// lets try to output the values directly...
 			RAFB * pfbPixel;
@@ -2955,6 +2961,12 @@ void ILI9488_t3::drawFontChar(unsigned int c)
 */
 		#ifdef ENABLE_ILI9488_FRAMEBUFFER
 		if (_use_fbtft) {
+      updateChangedRange(
+          start_x,
+          start_y); // update the range of the screen that has been changed;
+      updateChangedRange(
+          end_x,
+          end_y); // update the range of the screen that has been changed;
 			RAFB * pfbPixel_row = &_pfbtft[ start_y*_width + start_x];
 			RAFB * pfbPixel;
 			RAFB textbgcolor_index = mapColorToPalletIndex(textbgcolor);
@@ -3677,6 +3689,12 @@ void ILI9488_t3::drawGFXFontChar(unsigned int c) {
 
 		#ifdef ENABLE_ILI9488_FRAMEBUFFER
 		if (_use_fbtft) {
+      updateChangedRange(
+          x_start,
+          y_start); // update the range of the screen that has been changed;
+      updateChangedRange(
+          x_end,
+          y_end); // update the range of the screen that has been changed;
 			RAFB * pfbPixel_row = &_pfbtft[ y_start *_width + x_start];
 			// lets try to output the values directly...
 			RAFB * pfbPixel;
@@ -4305,7 +4323,6 @@ void ILI9488_t3::process_dma_interrupt(void) {
 
 		_dma_frame_count++;
 		//Serial.println("\nFrame complete");
-		if (_frame_complete_callback) (*_frame_complete_callback)();
 
 		if ((_dma_state & ILI9488_DMA_CONT) == 0) {
 			// We are in single refresh mode or the user has called cancel so
@@ -4935,6 +4952,7 @@ void ILI9488_t3::waitUpdateAsyncComplete(void)
 
 		#ifdef ENABLE_ILI9488_FRAMEBUFFER
 	  	if (_use_fbtft) {
+      	updateChangedRange(x, y); // update the range of the screen that has been changed;
 	  		_pfbtft[y*_width + x] = mapColorToPalletIndex(color);
 	  		return;
 	  	}

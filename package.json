@@ -1,11 +1,15 @@
 {
-  "name": "cores-midi-dual-serial-large-buffers",
-  "version": "1.59.0",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "author": "",
-  "license": "ISC",
-  "description": ""
+  "name": "framework-arduinoteensy",
+  "version": "1.159.0",
+  "description": "Arduino Wiring-based Framework for Teensy boards",
+  "keywords": [
+    "framework",
+    "arduino",
+    "teensy"
+  ],
+  "homepage": "https://www.arduino.cc/reference/en",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PaulStoffregen/cores"
+  }
 }
